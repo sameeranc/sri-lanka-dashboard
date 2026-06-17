@@ -405,21 +405,22 @@ app.layout = html.Div(
                                 "marginTop":"120px","fontSize":"1rem"},
                          children="← Click a grid point or move the slider to load plots"),
 
-                dcc.Tabs(id="tabs", value="annual",
-                         style={"display":"none"},
-                         colors={"border":"#313244","primary":"#89b4fa",
-                                  "background":"#181825"},
-                         children=[
-                    dcc.Tab(label="Annual Indices", value="annual",
-                            style={"color":"#cdd6f4","backgroundColor":"#181825"},
-                            selected_style={"color":"#89b4fa","backgroundColor":"#1e1e2e",
-                                            "fontWeight":"bold"}),
-                    dcc.Tab(label="Monthly Heatmaps", value="monthly",
-                            style={"color":"#cdd6f4","backgroundColor":"#181825"},
-                            selected_style={"color":"#89b4fa","backgroundColor":"#1e1e2e",
-                                            "fontWeight":"bold"}),
+                html.Div(id="tabs-container", style={"display":"none"}, children=[
+                    dcc.Tabs(id="tabs", value="annual",
+                             colors={"border":"#313244","primary":"#89b4fa",
+                                      "background":"#181825"},
+                             children=[
+                        dcc.Tab(label="Annual Indices", value="annual",
+                                style={"color":"#cdd6f4","backgroundColor":"#181825"},
+                                selected_style={"color":"#89b4fa","backgroundColor":"#1e1e2e",
+                                                "fontWeight":"bold"}),
+                        dcc.Tab(label="Monthly Heatmaps", value="monthly",
+                                style={"color":"#cdd6f4","backgroundColor":"#181825"},
+                                selected_style={"color":"#89b4fa","backgroundColor":"#1e1e2e",
+                                                "fontWeight":"bold"}),
+                    ]),
+                    html.Div(id="tab-content"),
                 ]),
-                html.Div(id="tab-content"),
             ],
         ),
     ]),
@@ -454,8 +455,8 @@ def update_slider(res, zone):
     Output("selected-grid",    "data"),
     Output("map",              "figure"),
     Output("selected-label",   "children"),
-    Output("plot-placeholder", "style"),
-    Output("tabs",             "style"),
+    Output("plot-placeholder",  "style"),
+    Output("tabs-container",    "style"),
     Output("grid-slider",      "value", allow_duplicate=True),
     Input("map",          "clickData"),
     Input("grid-slider",  "value"),
@@ -471,7 +472,7 @@ def on_interaction(click_data, slider_val, res, zone, current_grid, valid_ids):
     placeholder_vis = {"color":"#6c7086","textAlign":"center",
                        "marginTop":"120px","fontSize":"1rem"}
     tabs_hidden  = {"display":"none"}
-    tabs_visible = {"display":"flex"}
+    tabs_visible = {"display":"block"}
 
     # Resolution or zone changed → reset
     if triggered in ("grid-res", "zone-filter"):
