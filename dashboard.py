@@ -455,6 +455,230 @@ def make_drought_plots(res, grid_id, drought_inner_tab):
             figs.append(fig)
     return figs
 
+# ── Zone-average helpers ──────────────────────────────────────────────────────
+def _zone_grids(res, zone):
+    pts = DATA[res][0]
+    return pts[pts["Zone"] == zone]["Grid"].tolist()
+
+def _plot_layout_zone(title, zone_name, height=None):
+    layout = dict(
+        title=dict(text=f"{title} — {zone_name} (zone average)",
+                   font=dict(color=TEXT, size=13)),
+        paper_bgcolor=SURFACE, plot_bgcolor=BG, font=dict(color=TEXT),
+        showlegend=True,
+        legend=dict(orientation="h", y=-0.18, font=dict(size=10),
+                    bgcolor=SURFACE, bordercolor=BORDER, borderwidth=1),
+    )
+    if height:
+        layout["height"] = height
+    return layout
+
+def _zone_line_subplots(mean_df, std_df, group, meta, zone_name, show_trend=False):
+    cols   = [c for c in meta["cols"] if c in mean_df.columns]
+    labels = [l for c,l in zip(meta["cols"], meta["labels"]) if c in mean_df.columns]
+    colors = [cl for c,cl in zip(meta["cols"], meta["colors"]) if c in mean_df.columns]
+    if not cols:
+        return None
+    nr = max(1, (len(cols)+1)//2)
+    nc = min(2, len(cols))
+    fig = make_subplots(rows=nr, cols=nc, shared_xaxes=True, vertical_spacing=0.14)
+    for i, (col, lbl, clr) in enumerate(zip(cols, labels, colors)):
+        r, c = divmod(i, 2)
+        valid_m = mean_df[["Year", col]].dropna()
+        if valid_m.empty:
+            continue
+        # ±1 SD shaded band
+        if std_df is not None and col in std_df.columns:
+            merged = valid_m.merge(std_df[["Year", col]].rename(columns={col: "_s"}), on="Year")
+            upper = merged[col] + merged["_s"]
+            lower = merged[col] - merged["_s"]
+            fig.add_trace(go.Scatter(
+                x=pd.concat([merged["Year"], merged["Year"][::-1]]),
+                y=pd.concat([upper, lower[::-1]]),
+                fill="toself", fillcolor=hex_to_rgba(clr, 0.15),
+                line=dict(color="rgba(0,0,0,0)"),
+                showlegend=False, hoverinfo="skip", legendgroup=lbl,
+            ), row=r+1, col=c+1)
+        fig.add_trace(
+            go.Scatter(x=valid_m["Year"], y=valid_m[col], mode="lines+markers",
+                       name=lbl, line=dict(color=clr, width=2), marker=dict(size=4),
+                       hovertemplate=f"Year: %{{x}}<br>Mean {col}: %{{y:.2f}}<extra></extra>",
+                       legendgroup=lbl),
+            row=r+1, col=c+1)
+        if show_trend and len(valid_m) >= 2:
+            m, b  = np.polyfit(valid_m["Year"], valid_m[col], 1)
+            trend = m * valid_m["Year"] + b
+            fig.add_trace(
+                go.Scatter(x=valid_m["Year"], y=trend, mode="lines",
+                           name=f"{col} trend",
+                           line=dict(color="#555", width=1.5, dash="dash"),
+                           showlegend=False, legendgroup=lbl,
+                           hovertemplate=f"Year: %{{x}}<br>Trend: %{{y:.2f}}<extra></extra>"),
+                row=r+1, col=c+1)
+        fig.update_yaxes(title_text=meta["yunits"] or col, row=r+1, col=c+1,
+                         title_font=dict(size=10), gridcolor=BORDER,
+                         linecolor=BORDER, zerolinecolor=BORDER)
+    fig.update_xaxes(gridcolor=BORDER, linecolor=BORDER)
+    fig.update_layout(**_plot_layout_zone(group, zone_name,
+                                          height=300 if len(cols) <= 2 else 400))
+    return fig
+
+def make_temp_annual_plots_zone(res, zone, show_trend=False):
+    _, t_ann, _, _, _ = DATA[res]
+    grids    = _zone_grids(res, zone)
+    zdf      = t_ann[t_ann["Grid"].isin(grids)]
+    key_cols = [c for g in TEMP_ANN_GROUPS.values() for c in g["cols"] if c in zdf.columns]
+    mean_df  = zdf.groupby("Year")[key_cols].mean().reset_index()
+    std_df   = zdf.groupby("Year")[key_cols].std().reset_index()
+    figs = []
+    for group, meta in TEMP_ANN_GROUPS.items():
+        if meta.get("bar"):
+            cols   = [c for c in meta["cols"] if c in mean_df.columns]
+            labels = [l for c,l in zip(meta["cols"], meta["labels"]) if c in mean_df.columns]
+            colors = [cl for c,cl in zip(meta["cols"], meta["colors"]) if c in mean_df.columns]
+            vals   = [mean_df[c].mean() if c in mean_df.columns else np.nan for c in cols]
+            errs   = [std_df[c].mean() if c in std_df.columns else 0 for c in cols]
+            fig = go.Figure([go.Bar(x=labels, y=vals, marker_color=colors,
+                                    error_y=dict(type="data", array=errs, visible=True),
+                                    hovertemplate="%{x}<br>Mean: %{y:.2f} °C<extra></extra>")])
+            fig.update_layout(**_plot_layout_zone(group, zone))
+            fig.update_layout(yaxis_title="°C", xaxis=dict(tickfont=dict(size=10)),
+                              showlegend=False)
+        else:
+            fig = _zone_line_subplots(mean_df, std_df, group, meta, zone, show_trend)
+        if fig:
+            figs.append(fig)
+    return figs
+
+def make_precip_annual_plots_zone(res, zone, show_trend=False):
+    _, _, _, p_ann, _ = DATA[res]
+    grids    = _zone_grids(res, zone)
+    zdf      = p_ann[p_ann["Grid"].isin(grids)]
+    key_cols = [c for g in PRECIP_ANN_GROUPS.values() for c in g["cols"] if c in zdf.columns]
+    mean_df  = zdf.groupby("Year")[key_cols].mean().reset_index()
+    std_df   = zdf.groupby("Year")[key_cols].std().reset_index()
+    return [fig for group, meta in PRECIP_ANN_GROUPS.items()
+            for fig in [_zone_line_subplots(mean_df, std_df, group, meta, zone, show_trend)]
+            if fig is not None]
+
+def make_monthly_heatmap_zone(res, zone, col, title, colorscale):
+    _, _, t_mon, _, _ = DATA[res]
+    grids = _zone_grids(res, zone)
+    zdf   = t_mon[t_mon["Grid"].isin(grids)]
+    if zdf.empty or col not in zdf.columns:
+        return None
+    avg   = zdf.groupby(["Year", "Month"])[col].mean().reset_index()
+    pivot = avg.pivot(index="Year", columns="Month", values=col)
+    pivot.columns = [MONTH_NAMES[m-1] for m in pivot.columns]
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
+        colorscale=colorscale,
+        hovertemplate="Year: %{y}<br>Month: %{x}<br>Avg: %{z:.2f}<extra></extra>",
+        colorbar=dict(tickfont=dict(color=TEXT), tickcolor=TEXT),
+    ))
+    fig.update_layout(
+        title=dict(text=f"{title} — {zone} (zone average)", font=dict(color=TEXT, size=13)),
+        paper_bgcolor=SURFACE, plot_bgcolor=BG, font=dict(color=TEXT),
+        xaxis=dict(gridcolor=BORDER, linecolor=BORDER),
+        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, autorange="reversed"),
+        height=340, margin=dict(t=40, b=40),
+    )
+    return fig
+
+def make_drought_heatmap_zone(d_mon, zone_grids, col, title, zone_name):
+    zdf = d_mon[d_mon["Grid"].isin(zone_grids)].copy()
+    if zdf.empty or col not in zdf.columns:
+        return None
+    avg   = zdf.groupby(["Year", "Month"])[col].mean().reset_index()
+    pivot = avg.pivot(index="Year", columns="Month", values=col)
+    pivot.columns = [MONTH_NAMES[m-1] for m in pivot.columns]
+    abs_max = pivot.stack().abs().quantile(0.99)
+    abs_max = abs_max if abs_max > 0 else 1
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
+        colorscale="RdBu", zmid=0, zmin=-abs_max, zmax=abs_max,
+        hovertemplate="Year: %{y}<br>Month: %{x}<br>Avg: %{z:.3f}<extra></extra>",
+        colorbar=dict(tickfont=dict(color=TEXT), tickcolor=TEXT,
+                      title=dict(text=col.split("_")[0], font=dict(color=TEXT))),
+    ))
+    fig.update_layout(
+        title=dict(text=f"{title} — {zone_name} (zone average)", font=dict(color=TEXT, size=13)),
+        paper_bgcolor=SURFACE, plot_bgcolor=BG, font=dict(color=TEXT),
+        xaxis=dict(gridcolor=BORDER, linecolor=BORDER),
+        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, autorange="reversed"),
+        height=340, margin=dict(t=40, b=40),
+    )
+    return fig
+
+def make_drought_pdsi_plot_zone(d_mon, zone_grids, zone_name):
+    zdf = d_mon[d_mon["Grid"].isin(zone_grids)].copy()
+    if zdf.empty or "PDSI" not in zdf.columns:
+        return None
+    annual = zdf.groupby("Year")["PDSI"].agg(["mean", "std"]).reset_index()
+    fig = go.Figure()
+    for ylo, yhi, clr, lbl in [
+        (-8, -3,   "rgba(180,0,0,0.10)",    "Extreme drought"),
+        (-3, -2,   "rgba(220,80,0,0.10)",   "Severe drought"),
+        (-2, -1,   "rgba(255,165,0,0.10)",  "Moderate drought"),
+        (-1,  0,   "rgba(255,220,0,0.08)",  "Mild drought"),
+        ( 0,  1,   "rgba(200,230,200,0.08)","Near normal"),
+        ( 1,  8,   "rgba(0,100,200,0.08)",  "Wet"),
+    ]:
+        fig.add_hrect(y0=ylo, y1=yhi, fillcolor=clr, line_width=0,
+                      annotation_text=lbl, annotation_position="right",
+                      annotation=dict(font_size=9, font_color=TEXT2))
+    # SD band
+    upper = annual["mean"] + annual["std"]
+    lower = annual["mean"] - annual["std"]
+    fig.add_trace(go.Scatter(
+        x=pd.concat([annual["Year"], annual["Year"][::-1]]),
+        y=pd.concat([upper, lower[::-1]]),
+        fill="toself", fillcolor=hex_to_rgba(ACCENT, 0.15),
+        line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=annual["Year"], y=annual["mean"], mode="lines+markers",
+        name="PDSI (zone mean)", line=dict(color=ACCENT, width=2), marker=dict(size=5),
+        hovertemplate="Year: %{x}<br>Mean PDSI: %{y:.3f}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color=TEXT2, line_width=1)
+    fig.update_layout(
+        **_plot_layout_zone("Palmer Drought Severity Index (PDSI)", zone_name, height=340),
+        yaxis_title="PDSI", xaxis_title="Year",
+        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, zerolinecolor=BORDER),
+        xaxis=dict(gridcolor=BORDER, linecolor=BORDER),
+        showlegend=False,
+    )
+    return fig
+
+def make_drought_plots_zone(res, zone, drought_inner_tab):
+    _, _, _, _, d_mon = DATA[res]
+    zone_grids = _zone_grids(res, zone)
+    figs = []
+    if drought_inner_tab == "drought-pdsi":
+        fig = make_drought_pdsi_plot_zone(d_mon, zone_grids, zone)
+        if fig:
+            figs.append(fig)
+        fig = make_drought_heatmap_zone(d_mon, zone_grids, "PDSI",
+                                        "PDSI – Palmer Drought Severity Index", zone)
+        if fig:
+            figs.append(fig)
+        return figs
+    index_key = drought_inner_tab.split("-")[1].upper()
+    scales = DROUGHT_SCALES.get(index_key, {}).get(res, [])
+    scale_labels = {
+        "SPI" : "Standardised Precipitation Index",
+        "SPEI": "Standardised Precipitation-Evapotranspiration Index",
+        "EDDI": "Evaporative Demand Drought Index",
+    }
+    for s in scales:
+        col   = f"{index_key}_{s}"
+        title = f"{index_key}-{s}  ({scale_labels.get(index_key, index_key)}, {s}-month)"
+        fig   = make_drought_heatmap_zone(d_mon, zone_grids, col, title, zone)
+        if fig:
+            figs.append(fig)
+    return figs
+
 # ── Layout helpers ────────────────────────────────────────────────────────────
 def radio_group(label, id_, options, value):
     return html.Div(
@@ -764,6 +988,10 @@ def on_interaction(click_data, slider_val, res, zone, current_grid, valid_ids):
     if triggered in ("grid-res", "zone-filter"):
         pts_f    = filtered_pts(res, zone)
         first_id = int(sorted(pts_f["Grid"].tolist())[0]) if len(pts_f) else 1
+        if zone not in ("All zones", "No Climate Zones"):
+            n     = len(pts_f)
+            label = f"Zone average  →  {zone}  ({n} grid point{'s' if n != 1 else ''})"
+            return None, make_map(res, zone, None), label, hid, sho, first_id
         return None, make_map(res, zone, None), "", ph, hid, first_id
 
     if triggered == "map" and click_data:
@@ -804,18 +1032,35 @@ def on_interaction(click_data, slider_val, res, zone, current_grid, valid_ids):
     Input("selected-grid",  "data"),
     Input("trend-toggle",   "value"),
     State("grid-res",       "value"),
+    State("zone-filter",    "value"),
 )
-def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, trend_val, res):
-    if grid_id is None:
-        return []
+def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, trend_val, res, zone):
+    show_trend  = "show" in (trend_val or [])
+    zone_mode   = (grid_id is None and zone not in ("All zones", "No Climate Zones"))
 
-    show_trend = "show" in (trend_val or [])
+    if grid_id is None and not zone_mode:
+        return []
 
     def graph(fig):
         return dcc.Graph(figure=fig, config={"displayModeBar":False},
                          style={"borderRadius":"8px","border":f"1px solid {BORDER}",
                                 "backgroundColor":SURFACE})
 
+    # ── Zone-average mode ─────────────────────────────────────────────────────
+    if zone_mode:
+        if var_tab == "temp":
+            if temp_tab == "temp-annual":
+                return [graph(f) for f in make_temp_annual_plots_zone(res, zone, show_trend)]
+            _, _, t_mon, _, _ = DATA[res]
+            return [graph(fig) for col, title, cs in TEMP_HEATMAP_SPECS
+                    if col in t_mon.columns
+                    for fig in [make_monthly_heatmap_zone(res, zone, col, title, cs)]
+                    if fig is not None]
+        if var_tab == "precip":
+            return [graph(f) for f in make_precip_annual_plots_zone(res, zone, show_trend)]
+        return [graph(f) for f in make_drought_plots_zone(res, zone, drought_tab)]
+
+    # ── Individual grid mode ──────────────────────────────────────────────────
     if var_tab == "temp":
         if temp_tab == "temp-annual":
             return [graph(f) for f in make_temp_annual_plots(res, grid_id, show_trend)]
@@ -828,7 +1073,6 @@ def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, trend_val,
     if var_tab == "precip":
         return [graph(f) for f in make_precip_annual_plots(res, grid_id, show_trend)]
 
-    # Drought
     return [graph(f) for f in make_drought_plots(res, grid_id, drought_tab)]
 
 
