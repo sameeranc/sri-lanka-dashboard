@@ -275,7 +275,7 @@ def _plot_layout(title, grid_id, height=None):
         layout["height"] = height
     return layout
 
-def _line_subplots(gdata, group, meta, grid_id):
+def _line_subplots(gdata, group, meta, grid_id, show_trend=False):
     cols   = [c for c in meta["cols"] if c in gdata.columns]
     labels = [l for c,l in zip(meta["cols"], meta["labels"]) if c in gdata.columns]
     colors = [cl for c,cl in zip(meta["cols"], meta["colors"]) if c in gdata.columns]
@@ -286,11 +286,22 @@ def _line_subplots(gdata, group, meta, grid_id):
     fig = make_subplots(rows=nr, cols=nc, shared_xaxes=True, vertical_spacing=0.14)
     for i, (col, lbl, clr) in enumerate(zip(cols, labels, colors)):
         r, c = divmod(i, 2)
+        valid = gdata[["Year", col]].dropna()
         fig.add_trace(
-            go.Scatter(x=gdata["Year"], y=gdata[col], mode="lines+markers",
+            go.Scatter(x=valid["Year"], y=valid[col], mode="lines+markers",
                        name=lbl, line=dict(color=clr, width=2), marker=dict(size=4),
-                       hovertemplate=f"Year: %{{x}}<br>{col}: %{{y:.2f}}<extra></extra>"),
+                       hovertemplate=f"Year: %{{x}}<br>{col}: %{{y:.2f}}<extra></extra>",
+                       legendgroup=lbl),
             row=r+1, col=c+1)
+        if show_trend and len(valid) >= 2:
+            m, b  = np.polyfit(valid["Year"], valid[col], 1)
+            trend = m * valid["Year"] + b
+            fig.add_trace(
+                go.Scatter(x=valid["Year"], y=trend, mode="lines",
+                           name=f"{col} trend", line=dict(color="#555", width=1.5,
+                           dash="dash"), showlegend=False, legendgroup=lbl,
+                           hovertemplate=f"Year: %{{x}}<br>Trend: %{{y:.2f}}<extra></extra>"),
+                row=r+1, col=c+1)
         fig.update_yaxes(title_text=meta["yunits"] or col, row=r+1, col=c+1,
                          title_font=dict(size=10), gridcolor=BORDER,
                          linecolor=BORDER, zerolinecolor=BORDER)
@@ -299,7 +310,7 @@ def _line_subplots(gdata, group, meta, grid_id):
                                      height=300 if len(cols) <= 2 else 400))
     return fig
 
-def make_temp_annual_plots(res, grid_id):
+def make_temp_annual_plots(res, grid_id, show_trend=False):
     _, t_ann, _, _, _ = DATA[res]
     gdata = t_ann[t_ann["Grid"] == grid_id].sort_values("Year")
     figs  = []
@@ -316,16 +327,16 @@ def make_temp_annual_plots(res, grid_id):
             fig.update_layout(yaxis_title="°C", xaxis=dict(tickfont=dict(size=10)),
                               showlegend=False)
         else:
-            fig = _line_subplots(gdata, group, meta, grid_id)
+            fig = _line_subplots(gdata, group, meta, grid_id, show_trend)
         if fig:
             figs.append(fig)
     return figs
 
-def make_precip_annual_plots(res, grid_id):
+def make_precip_annual_plots(res, grid_id, show_trend=False):
     _, _, _, p_ann, _ = DATA[res]
     gdata = p_ann[p_ann["Grid"] == grid_id].sort_values("Year")
     return [fig for group, meta in PRECIP_ANN_GROUPS.items()
-            for fig in [_line_subplots(gdata, group, meta, grid_id)]
+            for fig in [_line_subplots(gdata, group, meta, grid_id, show_trend)]
             if fig is not None]
 
 def make_monthly_heatmap(res, grid_id, col, title, colorscale):
@@ -507,6 +518,26 @@ app.layout = html.Div(
                          {"label":"12.5 km  (423 pts)","value":"12.5"}], "25"),
             radio_group("Climate Zone", "zone-filter",
                         [{"label":z,"value":z} for z in ALL_ZONES], "All zones"),
+
+            # Trend line toggle — pushed to the right
+            html.Div(
+                style={"marginLeft":"auto","display":"flex","alignItems":"center","gap":"8px"},
+                children=[
+                    dcc.Checklist(
+                        id="trend-toggle",
+                        options=[{"label":"","value":"show"}],
+                        value=[],
+                        style={"display":"inline"},
+                        inputStyle={"accentColor":ACCENT,"width":"16px","height":"16px",
+                                    "cursor":"pointer","marginRight":"6px"},
+                    ),
+                    html.Label("Show trend lines",
+                               htmlFor="trend-toggle",
+                               style={"color":TEXT,"fontSize":"0.86rem",
+                                      "cursor":"pointer","userSelect":"none",
+                                      "fontWeight":"500"}),
+                ],
+            ),
         ],
     ),
 
@@ -728,11 +759,14 @@ def on_interaction(click_data, slider_val, res, zone, current_grid, valid_ids):
     Input("precip-tabs",    "value"),
     Input("drought-tabs",   "value"),
     Input("selected-grid",  "data"),
+    Input("trend-toggle",   "value"),
     State("grid-res",       "value"),
 )
-def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, res):
+def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, trend_val, res):
     if grid_id is None:
         return []
+
+    show_trend = "show" in (trend_val or [])
 
     def graph(fig):
         return dcc.Graph(figure=fig, config={"displayModeBar":False},
@@ -741,7 +775,7 @@ def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, res):
 
     if var_tab == "temp":
         if temp_tab == "temp-annual":
-            return [graph(f) for f in make_temp_annual_plots(res, grid_id)]
+            return [graph(f) for f in make_temp_annual_plots(res, grid_id, show_trend)]
         _, _, t_mon, _, _ = DATA[res]
         return [graph(fig) for col, title, cs in TEMP_HEATMAP_SPECS
                 if col in t_mon.columns
@@ -749,7 +783,7 @@ def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, res):
                 if fig is not None]
 
     if var_tab == "precip":
-        return [graph(f) for f in make_precip_annual_plots(res, grid_id)]
+        return [graph(f) for f in make_precip_annual_plots(res, grid_id, show_trend)]
 
     # Drought
     return [graph(f) for f in make_drought_plots(res, grid_id, drought_tab)]
