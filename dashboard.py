@@ -28,7 +28,7 @@ ZONE_COLORS = {
     "Intermediate zone": "#f4a261",
     "Arid zone":         "#e76f51",
 }
-ALL_ZONES = ["All zones"] + list(ZONE_COLORS.keys())
+ALL_ZONES = ["All zones", "No Climate Zones"] + list(ZONE_COLORS.keys())
 
 MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun",
                "Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -187,7 +187,9 @@ DATA = {"25": load_data("25"), "12.5": load_data("12.5")}
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def filtered_pts(res, zone):
     pts = DATA[res][0]
-    return pts if zone == "All zones" else pts[pts["Zone"] == zone].reset_index(drop=True)
+    if zone in ("All zones", "No Climate Zones"):
+        return pts
+    return pts[pts["Zone"] == zone].reset_index(drop=True)
 
 def slider_marks(grid_ids):
     ids = sorted(grid_ids)
@@ -205,9 +207,12 @@ def make_map(res, zone, selected_grid=None):
               for g, z in zip(pts_f["Grid"], pts_f["Zone"])]
     sizes  = [15 if g == selected_grid else marker_sz for g in pts_f["Grid"]]
 
+    show_zones = (zone != "No Climate Zones")
+
     fig = go.Figure()
-    for tr in ZONE_TRACES:
-        fig.add_trace(tr)
+    if show_zones:
+        for tr in ZONE_TRACES:
+            fig.add_trace(tr)
     fig.add_trace(go.Scattermapbox(
         lat=pts_f["Lat"], lon=pts_f["Lon"], mode="markers",
         marker=dict(size=sizes, color=colors, opacity=0.9),
@@ -215,15 +220,16 @@ def make_map(res, zone, selected_grid=None):
         hovertemplate="<b>%{text}</b><br>Lat: %{lat:.3f}<br>Lon: %{lon:.3f}<extra></extra>",
         customdata=pts_f["Grid"].values, name="Grid points", showlegend=False,
     ))
-    shown = set()
-    for tr in ZONE_TRACES:
-        if tr.name not in shown:
-            fig.add_trace(go.Scattermapbox(
-                lat=[None], lon=[None], mode="markers",
-                marker=dict(size=12, color=ZONE_COLORS.get(tr.name, "#888")),
-                name=tr.name, showlegend=True,
-            ))
-            shown.add(tr.name)
+    if show_zones:
+        shown = set()
+        for tr in ZONE_TRACES:
+            if tr.name not in shown:
+                fig.add_trace(go.Scattermapbox(
+                    lat=[None], lon=[None], mode="markers",
+                    marker=dict(size=12, color=ZONE_COLORS.get(tr.name, "#888")),
+                    name=tr.name, showlegend=True,
+                ))
+                shown.add(tr.name)
     fig.update_layout(
         mapbox=dict(style="open-street-map",
                     center=dict(lat=7.8731, lon=80.7718), zoom=6),
