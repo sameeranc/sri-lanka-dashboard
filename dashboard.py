@@ -22,6 +22,13 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 RV_COLS = ["rv20TXx", "rv20TXn", "rv20TNx", "rv20TNn"]
 
+# Drought timescale variants present in each resolution
+DROUGHT_SCALES = {
+    "SPI" : {"25": [1,3,6,12,24], "12.5": [3]},
+    "SPEI": {"25": [1,3,6,12],    "12.5": [3]},
+    "EDDI": {"25": [1,3,6,12],    "12.5": [3]},
+}
+
 # ── Light theme tokens ────────────────────────────────────────────────────────
 BG        = "#f8f9fa"   # page background
 SURFACE   = "#ffffff"   # cards / header / panels
@@ -191,7 +198,9 @@ def load_data(res):
             t_ann[c] = pd.to_numeric(t_ann[c], errors="coerce")
             t_ann[c] = t_ann[c].where(t_ann[c].abs() < 1e6, other=np.nan)
 
-    return pts, t_ann, t_mon, p_ann
+    d_mon = pd.read_csv(os.path.join(BASE, f"drought_indices_{res}Grid.csv"))
+
+    return pts, t_ann, t_mon, p_ann, d_mon
 
 DATA = {"25": load_data("25"), "12.5": load_data("12.5")}
 
@@ -291,7 +300,7 @@ def _line_subplots(gdata, group, meta, grid_id):
     return fig
 
 def make_temp_annual_plots(res, grid_id):
-    _, t_ann, _, _ = DATA[res]
+    _, t_ann, _, _, _ = DATA[res]
     gdata = t_ann[t_ann["Grid"] == grid_id].sort_values("Year")
     figs  = []
     for group, meta in TEMP_ANN_GROUPS.items():
@@ -313,14 +322,14 @@ def make_temp_annual_plots(res, grid_id):
     return figs
 
 def make_precip_annual_plots(res, grid_id):
-    _, _, _, p_ann = DATA[res]
+    _, _, _, p_ann, _ = DATA[res]
     gdata = p_ann[p_ann["Grid"] == grid_id].sort_values("Year")
     return [fig for group, meta in PRECIP_ANN_GROUPS.items()
             for fig in [_line_subplots(gdata, group, meta, grid_id)]
             if fig is not None]
 
 def make_monthly_heatmap(res, grid_id, col, title, colorscale):
-    _, _, t_mon, _ = DATA[res]
+    _, _, t_mon, _, _ = DATA[res]
     gdata = t_mon[t_mon["Grid"] == grid_id].copy()
     if gdata.empty or col not in gdata.columns:
         return None
@@ -340,6 +349,100 @@ def make_monthly_heatmap(res, grid_id, col, title, colorscale):
         height=340, margin=dict(t=40, b=40),
     )
     return fig
+
+# ── Drought plot functions ────────────────────────────────────────────────────
+def make_drought_heatmap(d_mon, grid_id, col, title):
+    """Year × Month heatmap with diverging RdBu scale (red=dry, blue=wet)."""
+    gdata = d_mon[d_mon["Grid"] == grid_id].copy()
+    if gdata.empty or col not in gdata.columns:
+        return None
+    pivot = gdata.pivot(index="Year", columns="Month", values=col)
+    pivot.columns = [MONTH_NAMES[m-1] for m in pivot.columns]
+    # Centre the colorscale at 0 (neutral)
+    abs_max = pivot.stack().abs().quantile(0.99)
+    abs_max = abs_max if abs_max > 0 else 1
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
+        colorscale="RdBu", zmid=0, zmin=-abs_max, zmax=abs_max,
+        hovertemplate="Year: %{y}<br>Month: %{x}<br>Value: %{z:.3f}<extra></extra>",
+        colorbar=dict(tickfont=dict(color=TEXT), tickcolor=TEXT,
+                      title=dict(text=col.split("_")[0], font=dict(color=TEXT))),
+    ))
+    fig.update_layout(
+        title=dict(text=f"{title} — Grid {grid_id}", font=dict(color=TEXT, size=13)),
+        paper_bgcolor=SURFACE, plot_bgcolor=BG, font=dict(color=TEXT),
+        xaxis=dict(gridcolor=BORDER, linecolor=BORDER),
+        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, autorange="reversed"),
+        height=340, margin=dict(t=40, b=40),
+    )
+    return fig
+
+def make_drought_pdsi_plot(d_mon, grid_id):
+    """Annual mean PDSI time series with drought category bands."""
+    gdata = d_mon[d_mon["Grid"] == grid_id].copy()
+    if gdata.empty or "PDSI" not in gdata.columns:
+        return None
+    annual = gdata.groupby("Year")["PDSI"].mean().reset_index()
+    fig = go.Figure()
+    # Shaded drought bands
+    for ylo, yhi, clr, lbl in [
+        (-8, -3,   "rgba(180,0,0,0.10)",   "Extreme drought"),
+        (-3, -2,   "rgba(220,80,0,0.10)",  "Severe drought"),
+        (-2, -1,   "rgba(255,165,0,0.10)", "Moderate drought"),
+        (-1,  0,   "rgba(255,220,0,0.08)", "Mild drought"),
+        ( 0,  1,   "rgba(200,230,200,0.08)","Near normal"),
+        ( 1,  8,   "rgba(0,100,200,0.08)", "Wet"),
+    ]:
+        fig.add_hrect(y0=ylo, y1=yhi, fillcolor=clr, line_width=0,
+                      annotation_text=lbl, annotation_position="right",
+                      annotation=dict(font_size=9, font_color=TEXT2))
+    fig.add_trace(go.Scatter(
+        x=annual["Year"], y=annual["PDSI"], mode="lines+markers",
+        name="PDSI (annual mean)", line=dict(color=ACCENT, width=2),
+        marker=dict(size=5),
+        hovertemplate="Year: %{x}<br>PDSI: %{y:.3f}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color=TEXT2, line_width=1)
+    fig.update_layout(
+        **_plot_layout("Palmer Drought Severity Index (PDSI)", grid_id, height=340),
+        yaxis_title="PDSI", xaxis_title="Year",
+        yaxis=dict(gridcolor=BORDER, linecolor=BORDER, zerolinecolor=BORDER),
+        xaxis=dict(gridcolor=BORDER, linecolor=BORDER),
+        showlegend=False,
+    )
+    return fig
+
+def make_drought_plots(res, grid_id, drought_inner_tab):
+    """Return a list of figures for the selected drought inner tab."""
+    _, _, _, _, d_mon = DATA[res]
+    figs = []
+
+    if drought_inner_tab == "drought-pdsi":
+        fig = make_drought_pdsi_plot(d_mon, grid_id)
+        if fig:
+            figs.append(fig)
+        # Also show PDSI heatmap
+        fig = make_drought_heatmap(d_mon, grid_id, "PDSI",
+                                   "PDSI – Palmer Drought Severity Index")
+        if fig:
+            figs.append(fig)
+        return figs
+
+    # SPI / SPEI / EDDI tabs
+    index_key = drought_inner_tab.split("-")[1].upper()   # "spi" → "SPI"
+    scales    = DROUGHT_SCALES.get(index_key, {}).get(res, [])
+    scale_labels = {
+        "SPI" : "Standardised Precipitation Index",
+        "SPEI": "Standardised Precipitation-Evapotranspiration Index",
+        "EDDI": "Evaporative Demand Drought Index",
+    }
+    for s in scales:
+        col   = f"{index_key}_{s}"
+        title = f"{index_key}-{s}  ({scale_labels.get(index_key, index_key)}, {s}-month)"
+        fig   = make_drought_heatmap(d_mon, grid_id, col, title)
+        if fig:
+            figs.append(fig)
+    return figs
 
 # ── Layout helpers ────────────────────────────────────────────────────────────
 def radio_group(label, id_, options, value):
@@ -420,6 +523,8 @@ app.layout = html.Div(
                             style=tab_style(False), selected_style=tab_style(True)),
                     dcc.Tab(label="🌧  Precipitation", value="precip",
                             style=tab_style(False), selected_style=tab_style(True)),
+                    dcc.Tab(label="🌵  Drought", value="drought",
+                            style=tab_style(False), selected_style=tab_style(True)),
                 ],
             ),
         ],
@@ -496,6 +601,26 @@ app.layout = html.Div(
                         ]),
                     ]),
 
+                    # Drought inner tabs
+                    html.Div(id="drought-tabs-wrapper", children=[
+                        dcc.Tabs(id="drought-tabs", value="drought-spi",
+                                 colors={"border":BORDER,"primary":"#c0392b","background":SURFACE2},
+                                 children=[
+                            dcc.Tab(label="SPI", value="drought-spi",
+                                    style=inner_tab_style(False),
+                                    selected_style=inner_tab_style(True)),
+                            dcc.Tab(label="SPEI", value="drought-spei",
+                                    style=inner_tab_style(False),
+                                    selected_style=inner_tab_style(True)),
+                            dcc.Tab(label="EDDI", value="drought-eddi",
+                                    style=inner_tab_style(False),
+                                    selected_style=inner_tab_style(True)),
+                            dcc.Tab(label="PDSI", value="drought-pdsi",
+                                    style=inner_tab_style(False),
+                                    selected_style=inner_tab_style(True)),
+                        ]),
+                    ]),
+
                     html.Div(id="tab-content"),
                 ]),
             ],
@@ -529,11 +654,16 @@ def update_slider(res, zone):
 @app.callback(
     Output("temp-tabs-wrapper",   "style"),
     Output("precip-tabs-wrapper", "style"),
+    Output("drought-tabs-wrapper","style"),
     Input("variable-tab", "value"),
 )
 def toggle_inner_tabs(var_tab):
     show, hide = {"display":"block"}, {"display":"none"}
-    return (show, hide) if var_tab == "temp" else (hide, show)
+    return (
+        show if var_tab == "temp"   else hide,
+        show if var_tab == "precip" else hide,
+        show if var_tab == "drought" else hide,
+    )
 
 
 @app.callback(
@@ -593,13 +723,14 @@ def on_interaction(click_data, slider_val, res, zone, current_grid, valid_ids):
 
 @app.callback(
     Output("tab-content", "children"),
-    Input("variable-tab",  "value"),
-    Input("temp-tabs",     "value"),
-    Input("precip-tabs",   "value"),
-    Input("selected-grid", "data"),
-    State("grid-res",      "value"),
+    Input("variable-tab",   "value"),
+    Input("temp-tabs",      "value"),
+    Input("precip-tabs",    "value"),
+    Input("drought-tabs",   "value"),
+    Input("selected-grid",  "data"),
+    State("grid-res",       "value"),
 )
-def render_plots(var_tab, temp_tab, precip_tab, grid_id, res):
+def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, res):
     if grid_id is None:
         return []
 
@@ -611,13 +742,17 @@ def render_plots(var_tab, temp_tab, precip_tab, grid_id, res):
     if var_tab == "temp":
         if temp_tab == "temp-annual":
             return [graph(f) for f in make_temp_annual_plots(res, grid_id)]
-        _, _, t_mon, _ = DATA[res]
+        _, _, t_mon, _, _ = DATA[res]
         return [graph(fig) for col, title, cs in TEMP_HEATMAP_SPECS
                 if col in t_mon.columns
                 for fig in [make_monthly_heatmap(res, grid_id, col, title, cs)]
                 if fig is not None]
 
-    return [graph(f) for f in make_precip_annual_plots(res, grid_id)]
+    if var_tab == "precip":
+        return [graph(f) for f in make_precip_annual_plots(res, grid_id)]
+
+    # Drought
+    return [graph(f) for f in make_drought_plots(res, grid_id, drought_tab)]
 
 
 if __name__ == "__main__":
