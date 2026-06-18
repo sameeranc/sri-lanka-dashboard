@@ -204,6 +204,30 @@ def load_data(res):
 
 DATA = {"25": load_data("25"), "12.5": load_data("12.5")}
 
+# ── Custom Plots index catalogue ──────────────────────────────────────────────
+CUSTOM_INDEX_MAP = {
+    "Temperature": [
+        {"label": lbl, "value": col}
+        for group in TEMP_ANN_GROUPS.values()
+        for col, lbl in zip(group["cols"], group["labels"])
+    ],
+    "Precipitation": [
+        {"label": lbl, "value": col}
+        for group in PRECIP_ANN_GROUPS.values()
+        for col, lbl in zip(group["cols"], group["labels"])
+    ],
+    "Drought": (
+        [{"label": f"SPI-{s}",  "value": f"SPI_{s}"}  for s in DROUGHT_SCALES["SPI"]["25"]]  +
+        [{"label": f"SPEI-{s}", "value": f"SPEI_{s}"} for s in DROUGHT_SCALES["SPEI"]["25"]] +
+        [{"label": f"EDDI-{s}", "value": f"EDDI_{s}"} for s in DROUGHT_SCALES["EDDI"]["25"]] +
+        [{"label": "PDSI", "value": "PDSI"}]
+    ),
+}
+
+_all_years = sorted(set(DATA["25"][1]["Year"].tolist()) |
+                    set(DATA["25"][3]["Year"].tolist()))
+YEAR_OPTIONS = [{"label": str(y), "value": y} for y in _all_years]
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def filtered_pts(res, zone):
     pts = DATA[res][0]
@@ -679,6 +703,95 @@ def make_drought_plots_zone(res, zone, drought_inner_tab):
             figs.append(fig)
     return figs
 
+# ── Custom Plots functions ────────────────────────────────────────────────────
+def get_custom_data(res, zone, category, col, year):
+    pts_f = filtered_pts(res, zone)
+    if category == "Temperature":
+        _, t_ann, _, _, _ = DATA[res]
+        yr = t_ann[t_ann["Year"] == year]
+        if col not in yr.columns:
+            return pd.DataFrame()
+        df = yr[["Grid", col]].dropna()
+    elif category == "Precipitation":
+        _, _, _, p_ann, _ = DATA[res]
+        yr = p_ann[p_ann["Year"] == year]
+        if col not in yr.columns:
+            return pd.DataFrame()
+        df = yr[["Grid", col]].dropna()
+    else:  # Drought — annual mean of monthly values
+        _, _, _, _, d_mon = DATA[res]
+        if col not in d_mon.columns:
+            return pd.DataFrame()
+        df = (d_mon[d_mon["Year"] == year]
+              .groupby("Grid")[col].mean().reset_index())
+    return pts_f[["Grid", "Lat", "Lon", "Zone"]].merge(df, on="Grid", how="inner")
+
+def make_custom_map(df, col, category, zone):
+    if df.empty:
+        return go.Figure()
+    vals = df[col]
+    if category == "Drought":
+        colorscale = "RdBu"
+        abs_max = vals.abs().quantile(0.99) if len(vals) else 1
+        abs_max = max(abs_max, 0.01)
+        marker_extra = dict(cmin=-abs_max, cmax=abs_max)
+    elif category == "Temperature":
+        colorscale = "RdYlBu_r"
+        marker_extra = {}
+    else:
+        colorscale = "Blues"
+        marker_extra = {}
+    fig = go.Figure()
+    if zone != "No Climate Zones":
+        for tr in ZONE_TRACES:
+            fig.add_trace(tr)
+    fig.add_trace(go.Scattermapbox(
+        lat=df["Lat"], lon=df["Lon"], mode="markers",
+        marker=dict(size=12, color=vals, colorscale=colorscale,
+                    showscale=True, opacity=0.9,
+                    colorbar=dict(title=dict(text=col, font=dict(color=TEXT)),
+                                  tickfont=dict(color=TEXT)),
+                    **marker_extra),
+        text=[f"Grid {g} — {z}<br>{col}: {v:.3f}"
+              for g, z, v in zip(df["Grid"], df["Zone"], vals)],
+        hovertemplate="<b>%{text}</b><extra></extra>",
+        showlegend=False,
+    ))
+    fig.update_layout(
+        mapbox=dict(style="open-street-map",
+                    center=dict(lat=7.8731, lon=80.7718), zoom=6),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor=SURFACE, height=400,
+    )
+    return fig
+
+def make_custom_bar(df, col):
+    if df.empty:
+        return go.Figure()
+    sdf    = df.sort_values(col).reset_index(drop=True)
+    colors = [ZONE_COLORS.get(z, ACCENT) for z in sdf["Zone"]]
+    mean_v = sdf[col].mean()
+    fig = go.Figure(go.Bar(
+        x=[f"G{g}" for g in sdf["Grid"]],
+        y=sdf[col],
+        marker_color=colors,
+        hovertemplate="Grid %{x}<br>" + col + ": %{y:.3f}<extra></extra>",
+    ))
+    fig.add_hline(y=mean_v, line_dash="dash", line_color=TEXT2, line_width=1.5,
+                  annotation_text=f"Mean: {mean_v:.2f}",
+                  annotation_position="top right",
+                  annotation=dict(font_color=TEXT2, font_size=10))
+    fig.update_layout(
+        title=dict(text=f"{col} — all grid points (sorted by value)",
+                   font=dict(color=TEXT, size=13)),
+        paper_bgcolor=SURFACE, plot_bgcolor=BG, font=dict(color=TEXT),
+        xaxis=dict(title="Grid point", tickfont=dict(size=8),
+                   gridcolor=BORDER, linecolor=BORDER, tickangle=60),
+        yaxis=dict(title=col, gridcolor=BORDER, linecolor=BORDER),
+        height=300, showlegend=False, margin=dict(t=40, b=70),
+    )
+    return fig
+
 # ── Layout helpers ────────────────────────────────────────────────────────────
 def radio_group(label, id_, options, value):
     return html.Div(
@@ -823,6 +936,8 @@ app.layout = html.Div(
                             style=tab_style(False), selected_style=tab_style(True)),
                     dcc.Tab(label="🌵  Drought", value="drought",
                             style=tab_style(False), selected_style=tab_style(True)),
+                    dcc.Tab(label="📊  Custom Plots", value="custom",
+                            style=tab_style(False), selected_style=tab_style(True)),
                 ],
             ),
         ],
@@ -920,6 +1035,79 @@ app.layout = html.Div(
                     ]),
 
                     html.Div(id="tab-content"),
+                ]),
+
+                # ── Custom Plots panel ────────────────────────────────────────
+                html.Div(id="custom-content", style={"display":"none"}, children=[
+
+                    # Controls row
+                    html.Div(
+                        style={"display":"flex","gap":"16px","alignItems":"flex-end",
+                               "flexWrap":"wrap","marginBottom":"12px",
+                               "padding":"10px 14px","backgroundColor":SURFACE,
+                               "borderRadius":"8px","border":f"1px solid {BORDER}"},
+                        children=[
+
+                            # Category radio
+                            html.Div([
+                                html.Label("INDEX CATEGORY",
+                                           style={"color":TEXT2,"fontSize":"0.68rem",
+                                                  "fontWeight":"700","letterSpacing":"0.06em",
+                                                  "display":"block","marginBottom":"6px"}),
+                                dcc.RadioItems(
+                                    id="custom-category",
+                                    options=[{"label": c, "value": c}
+                                             for c in CUSTOM_INDEX_MAP],
+                                    value="Temperature",
+                                    inline=True,
+                                    style={"display":"flex","gap":"14px"},
+                                    inputStyle={"accentColor":ACCENT,"marginRight":"4px"},
+                                    labelStyle={"color":TEXT,"fontSize":"0.86rem"},
+                                ),
+                            ]),
+
+                            # Index dropdown
+                            html.Div([
+                                html.Label("INDEX",
+                                           style={"color":TEXT2,"fontSize":"0.68rem",
+                                                  "fontWeight":"700","letterSpacing":"0.06em",
+                                                  "display":"block","marginBottom":"6px"}),
+                                dcc.Dropdown(
+                                    id="custom-index",
+                                    options=CUSTOM_INDEX_MAP["Temperature"],
+                                    value=CUSTOM_INDEX_MAP["Temperature"][0]["value"],
+                                    clearable=False,
+                                    style={"minWidth":"280px","fontSize":"0.86rem"},
+                                ),
+                            ]),
+
+                            # Year dropdown
+                            html.Div([
+                                html.Label("YEAR",
+                                           style={"color":TEXT2,"fontSize":"0.68rem",
+                                                  "fontWeight":"700","letterSpacing":"0.06em",
+                                                  "display":"block","marginBottom":"6px"}),
+                                dcc.Dropdown(
+                                    id="custom-year",
+                                    options=YEAR_OPTIONS,
+                                    value=_all_years[-1],
+                                    clearable=False,
+                                    style={"minWidth":"100px","fontSize":"0.86rem"},
+                                ),
+                            ]),
+                        ],
+                    ),
+
+                    # Map
+                    dcc.Graph(id="custom-map",
+                              config={"scrollZoom":True},
+                              style={"borderRadius":"8px","border":f"1px solid {BORDER}",
+                                     "backgroundColor":SURFACE}),
+                    # Bar chart
+                    dcc.Graph(id="custom-bar",
+                              config={"displayModeBar":False},
+                              style={"borderRadius":"8px","border":f"1px solid {BORDER}",
+                                     "backgroundColor":SURFACE,"marginTop":"10px"}),
                 ]),
             ],
         ),
@@ -1074,6 +1262,54 @@ def render_plots(var_tab, temp_tab, precip_tab, drought_tab, grid_id, trend_val,
         return [graph(f) for f in make_precip_annual_plots(res, grid_id, show_trend)]
 
     return [graph(f) for f in make_drought_plots(res, grid_id, drought_tab)]
+
+
+@app.callback(
+    Output("custom-content",   "style", allow_duplicate=True),
+    Output("tabs-container",   "style", allow_duplicate=True),
+    Output("plot-placeholder", "style", allow_duplicate=True),
+    Input("variable-tab", "value"),
+    State("selected-grid", "data"),
+    State("zone-filter",   "value"),
+    prevent_initial_call=True,
+)
+def toggle_custom_panel(var_tab, grid_id, zone):
+    hid = {"display":"none"}
+    sho = {"display":"block"}
+    ph  = {"color":TEXT2,"textAlign":"center","marginTop":"120px","fontSize":"1rem"}
+    zone_mode = grid_id is None and zone not in ("All zones","No Climate Zones")
+    if var_tab == "custom":
+        return sho, hid, hid
+    # Restore normal panels
+    if grid_id is not None or zone_mode:
+        return hid, sho, hid
+    return hid, hid, ph
+
+
+@app.callback(
+    Output("custom-index", "options"),
+    Output("custom-index", "value"),
+    Input("custom-category", "value"),
+)
+def update_index_options(category):
+    opts = CUSTOM_INDEX_MAP.get(category, [])
+    return opts, opts[0]["value"] if opts else None
+
+
+@app.callback(
+    Output("custom-map", "figure"),
+    Output("custom-bar", "figure"),
+    Input("custom-category", "value"),
+    Input("custom-index",    "value"),
+    Input("custom-year",     "value"),
+    State("grid-res",        "value"),
+    State("zone-filter",     "value"),
+)
+def render_custom(category, col, year, res, zone):
+    if not col or not year:
+        return go.Figure(), go.Figure()
+    df  = get_custom_data(res, zone, category, col, year)
+    return make_custom_map(df, col, category, zone), make_custom_bar(df, col)
 
 
 if __name__ == "__main__":
