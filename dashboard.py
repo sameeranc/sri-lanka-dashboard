@@ -25,7 +25,7 @@ RV_COLS = ["rv20TXx", "rv20TXn", "rv20TNx", "rv20TNn"]
 # ── Light theme tokens ────────────────────────────────────────────────────────
 BG        = "#f8f9fa"   # page background
 SURFACE   = "#ffffff"   # cards / header / panels
-SURFACE2  = "#f1f3f5"   # subtle secondary surface (slider panel)
+SURFACE2  = "#dde3ea"   # subtle secondary surface (slider panel)
 BORDER    = "#dee2e6"   # borders
 TEXT      = "#212529"   # primary text
 TEXT2     = "#6c757d"   # secondary / muted text
