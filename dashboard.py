@@ -503,39 +503,82 @@ app.layout = html.Div(
 
     # ── Header ────────────────────────────────────────────────────────────────
     html.Div(
-        style={"backgroundColor":SURFACE,"padding":"10px 24px",
-               "borderBottom":f"1px solid {BORDER}","boxShadow":"0 1px 4px rgba(0,0,0,0.08)",
-               "display":"flex","alignItems":"center","gap":"40px","flexWrap":"wrap"},
+        style={"backgroundColor":SURFACE,"borderBottom":f"1px solid {BORDER}",
+               "boxShadow":"0 1px 4px rgba(0,0,0,0.08)","padding":"10px 24px 12px"},
         children=[
-            html.Div([
-                html.H2("Sri Lanka Climate Indices Explorer",
-                        style={"color":TEXT,"margin":0,"fontSize":"1.25rem","fontWeight":"700"}),
-                html.P("Click a grid point or use the slider to select a grid.",
-                       style={"color":TEXT2,"margin":"2px 0 0","fontSize":"0.79rem"}),
-            ]),
-            radio_group("Grid Resolution", "grid-res",
-                        [{"label":"25 km  (107 pts)","value":"25"},
-                         {"label":"12.5 km  (423 pts)","value":"12.5"}], "25"),
-            radio_group("Climate Zone", "zone-filter",
-                        [{"label":z,"value":z} for z in ALL_ZONES], "All zones"),
 
-            # Trend line toggle — pushed to the right
+            # Title — centred
+            html.H2("Sri Lanka Climate Indices Explorer",
+                    style={"color":TEXT,"margin":"0 0 10px 0","fontSize":"1.3rem",
+                           "fontWeight":"700","textAlign":"center"}),
+
+            # Controls row
             html.Div(
-                style={"marginLeft":"auto","display":"flex","alignItems":"center","gap":"8px"},
+                style={"display":"flex","alignItems":"center","gap":"16px",
+                       "flexWrap":"wrap","justifyContent":"center"},
                 children=[
-                    dcc.Checklist(
-                        id="trend-toggle",
-                        options=[{"label":"","value":"show"}],
-                        value=[],
-                        style={"display":"inline"},
-                        inputStyle={"accentColor":ACCENT,"width":"16px","height":"16px",
-                                    "cursor":"pointer","marginRight":"6px"},
+
+                    # Grid Resolution — bordered box
+                    html.Div(
+                        style={"border":"1.5px solid #000","borderRadius":"6px",
+                               "padding":"6px 12px"},
+                        children=[
+                            html.Label("GRID RESOLUTION",
+                                       style={"color":TEXT2,"fontSize":"0.68rem",
+                                              "fontWeight":"700","letterSpacing":"0.06em",
+                                              "display":"block","marginBottom":"4px"}),
+                            dcc.RadioItems(
+                                id="grid-res",
+                                options=[{"label":"25 km  (107 pts)","value":"25"},
+                                         {"label":"12.5 km  (423 pts)","value":"12.5"}],
+                                value="25", inline=True,
+                                style={"display":"flex","gap":"14px"},
+                                inputStyle={"accentColor":ACCENT,"marginRight":"4px"},
+                                labelStyle={"color":TEXT,"fontSize":"0.86rem"},
+                            ),
+                        ],
                     ),
-                    html.Label("Show trend lines",
-                               htmlFor="trend-toggle",
-                               style={"color":TEXT,"fontSize":"0.86rem",
-                                      "cursor":"pointer","userSelect":"none",
-                                      "fontWeight":"500"}),
+
+                    # Climate Zone — bordered box
+                    html.Div(
+                        style={"border":"1.5px solid #000","borderRadius":"6px",
+                               "padding":"6px 12px"},
+                        children=[
+                            html.Label("CLIMATE ZONE",
+                                       style={"color":TEXT2,"fontSize":"0.68rem",
+                                              "fontWeight":"700","letterSpacing":"0.06em",
+                                              "display":"block","marginBottom":"4px"}),
+                            dcc.RadioItems(
+                                id="zone-filter",
+                                options=[{"label":z,"value":z} for z in ALL_ZONES],
+                                value="All zones", inline=True,
+                                style={"display":"flex","gap":"14px","flexWrap":"wrap"},
+                                inputStyle={"accentColor":ACCENT,"marginRight":"4px"},
+                                labelStyle={"color":TEXT,"fontSize":"0.86rem"},
+                            ),
+                        ],
+                    ),
+
+                    # Trend line toggle — bordered box
+                    html.Div(
+                        style={"border":"1.5px solid #000","borderRadius":"6px",
+                               "padding":"6px 12px","display":"flex",
+                               "alignItems":"center","gap":"8px","cursor":"pointer"},
+                        children=[
+                            dcc.Checklist(
+                                id="trend-toggle",
+                                options=[{"label":"","value":"show"}],
+                                value=[],
+                                inputStyle={"accentColor":ACCENT,"width":"15px",
+                                            "height":"15px","cursor":"pointer",
+                                            "marginRight":"4px"},
+                            ),
+                            html.Label("Show trend lines",
+                                       style={"color":TEXT,"fontSize":"0.86rem",
+                                              "cursor":"pointer","userSelect":"none",
+                                              "fontWeight":"500","marginBottom":"0"}),
+                        ],
+                    ),
                 ],
             ),
         ],
